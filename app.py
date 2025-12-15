@@ -1,5 +1,5 @@
 import streamlit as st
-import pdfplumber
+import pypdf
 import re
 from textblob import TextBlob
 
