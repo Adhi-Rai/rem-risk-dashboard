@@ -1,145 +1,184 @@
 import streamlit as st
 import re
+import statistics
 
 # ==================================================
 # PAGE
 # ==================================================
-st.title("Earnings Manipulation Risk Dashboard")
+st.title("Automated Earnings Manipulation Detection Dashboard")
 
-st.write(
-    """
-    **Stakeholder View**  
-    Input: Annual Report PDF  
-    Output: Earnings Manipulation Risk  
+st.write("""
+**Input:** 2–5 annual report PDFs (same company, older → newer)  
+**Model:**  
+• Numeric REM using ABS(-CFO) + ABS(PROD) + ABS(-DISC)  
+• Independent Text Manipulation Analysis  
+• Baseline-adjusted, fully automated
+""")
 
-    The system automatically detects real earnings management (REM)
-    indicators from narrative and numerical patterns in the report.
-    """
+# ==================================================
+# INPUT
+# ==================================================
+files = st.file_uploader(
+    "Upload 2–5 Annual Report PDFs",
+    type=["pdf"],
+    accept_multiple_files=True
 )
 
 # ==================================================
-# PDF INPUT
+# TEXT EXTRACTION
 # ==================================================
-uploaded_file = st.file_uploader(
-    "Upload Annual Report (PDF)",
-    type=["pdf"]
-)
+def extract_text(file):
+    raw = file.read()
+    return raw.decode("latin-1", errors="ignore").lower()
 
 # ==================================================
-# BASIC PDF TEXT EXTRACTION (PURE PYTHON)
+# TEXT ANALYSIS
 # ==================================================
-def extract_text_from_pdf(file):
-    try:
-        raw = file.read()
-        return raw.decode("latin-1", errors="ignore").lower()
-    except:
-        return ""
+OPT = ["strong","robust","record","growth","outperformance"]
+UNC = ["may","might","could","risk","uncertain","volatility","challenge"]
+JUST = ["one-time","temporary","non-recurring","adjusted","excluding"]
 
-# ==================================================
-# TEXTUAL REM SIGNALS
-# ==================================================
-optimism_words = [
-    "strong", "record", "robust", "exceptional",
-    "resilient", "growth", "outperformance"
-]
+def text_score(text):
+    n = max(len(text.split()), 1)
 
-uncertainty_words = [
-    "may", "might", "could", "risk", "uncertain",
-    "challenge", "headwinds", "volatility"
-]
+    optimism = sum(text.count(w) for w in OPT) / n * 1000
+    uncertainty = sum(text.count(w) for w in UNC) / n * 1000
+    justification = sum(text.count(w) for w in JUST) / n * 1000
 
-justification_words = [
-    "one-time", "exceptional", "temporary",
-    "non-recurring", "adjusted", "excluding"
-]
-
-def word_score(text, words):
-    return sum(text.count(w) for w in words)
+    return (
+        0.30 * optimism +
+        0.40 * uncertainty +
+        0.30 * justification
+    )
 
 # ==================================================
-# AUTO NUMERIC DETECTION (HEURISTIC)
+# NUMERIC REM PROXIES (DENSITY-BASED)
 # ==================================================
-def detect_large_numbers(text):
-    # detects large financial-looking numbers (₹, $, millions, crores etc.)
-    pattern = r"(rs\.?|₹|\$)?\s?\d{2,}(?:,\d{2,})*(?:\.\d+)?"
-    numbers = re.findall(pattern, text)
-    return len(numbers)
+def density(text, keywords):
+    n = max(len(text.split()), 1)
+    return sum(text.count(k) for k in keywords) / n * 1000
 
-def detect_financial_activity(text, keywords):
-    return sum(text.count(k) for k in keywords)
+CFO_KEYS = ["cash flow", "cash from operations", "operating cash", "cfo"]
+PROD_KEYS = ["inventory", "production", "raw material", "cost of goods"]
+DISC_KEYS = ["marketing", "advertis", "r&d", "selling", "sg&a"]
 
 # ==================================================
 # MAIN ANALYSIS
 # ==================================================
-if uploaded_file and st.button("Analyze Report"):
+if files and len(files) >= 2 and st.button("Run Analysis"):
 
-    with st.spinner("Analyzing report automatically..."):
+    text_scores = []
+    cfo_vals, prod_vals, disc_vals = [], [], []
 
-        text = extract_text_from_pdf(uploaded_file)
-
-        if len(text.strip()) < 1000:
-            st.error("PDF does not contain sufficient readable text.")
+    for f in files:
+        text = extract_text(f)
+        if len(text) < 1200:
+            st.error("One PDF has insufficient readable text.")
             st.stop()
 
-        # ---------------- TEXT REM SCORE ----------------
-        optimism = word_score(text, optimism_words)
-        uncertainty = word_score(text, uncertainty_words)
-        justification = word_score(text, justification_words)
+        # --- TEXT ---
+        text_scores.append(text_score(text))
 
-        text_rem_score = (
-            0.35 * optimism +
-            0.40 * uncertainty +
-            0.25 * justification
-        )
+        # --- NUMERIC PROXIES ---
+        cfo_vals.append(density(text, CFO_KEYS))
+        prod_vals.append(density(text, PROD_KEYS))
+        disc_vals.append(density(text, DISC_KEYS))
 
-        # ---------------- NUMERIC REM PROXIES ----------------
-        large_numbers = detect_large_numbers(text)
+    # ==================================================
+    # BASELINE vs CURRENT
+    # ==================================================
+    base_text = statistics.mean(text_scores[:-1])
+    curr_text = text_scores[-1]
+    abnormal_text = abs(curr_text - base_text)
 
-        inventory_mentions = detect_financial_activity(
-            text, ["inventory", "stock", "raw material"]
-        )
+    base_cfo = statistics.mean(cfo_vals[:-1])
+    base_prod = statistics.mean(prod_vals[:-1])
+    base_disc = statistics.mean(disc_vals[:-1])
 
-        receivable_mentions = detect_financial_activity(
-            text, ["receivable", "debtor", "outstanding"]
-        )
+    curr_cfo = cfo_vals[-1]
+    curr_prod = prod_vals[-1]
+    curr_disc = disc_vals[-1]
 
-        cashflow_mentions = detect_financial_activity(
-            text, ["cash flow", "operating cash", "cfo"]
-        )
+    # --------------------------------------------------
+    # SIGNED ABNORMAL VALUES (IMPORTANT)
+    # --------------------------------------------------
+    ab_cfo = curr_cfo - base_cfo        # ↓ CFO = income increasing
+    ab_prod = curr_prod - base_prod     # ↑ production = income increasing
+    ab_disc = curr_disc - base_disc     # ↓ disc exp = income increasing
 
-        capex_mentions = detect_financial_activity(
-            text, ["capital expenditure", "capex", "investment"]
-        )
+    # --------------------------------------------------
+    # EXACT FORMULA YOU ASKED FOR
+    # --------------------------------------------------
+    rem_score = (
+        abs(-1 * ab_cfo) +
+        abs(ab_prod) +
+        abs(-1 * ab_disc)
+    )
 
-        numeric_rem_score = (
-            0.25 * large_numbers +
-            0.20 * inventory_mentions +
-            0.20 * receivable_mentions +
-            0.20 * capex_mentions +
-            0.15 * (1 / (cashflow_mentions + 1))
-        )
+    # ==================================================
+    # INTERPRETATION
+    # ==================================================
+    def level(x):
+        if x > 6:
+            return "High"
+        elif x > 3:
+            return "Moderate"
+        else:
+            return "Low"
 
-        # ---------------- FINAL SCORE ----------------
-        final_score = (0.55 * numeric_rem_score) + (0.45 * text_rem_score)
+    rem_level = level(rem_score)
+    text_level = level(abnormal_text)
+
+    # Direction of income effect
+    income_effect = []
+    if ab_cfo < 0:
+        income_effect.append("CFO suppression (income-increasing)")
+    if ab_prod > 0:
+        income_effect.append("Overproduction (income-increasing)")
+    if ab_disc < 0:
+        income_effect.append("Discretionary cost cutting (income-increasing)")
+
+    # ==================================================
+    # FINAL DECISION
+    # ==================================================
+    if rem_level == "High" and text_level == "High":
+        final = "🔴 Confirmed Earnings Manipulation (Numeric + Language aligned)"
+    elif rem_level in ["High","Moderate"] and text_level in ["High","Moderate"]:
+        final = "🟠 Likely Earnings Manipulation"
+    elif rem_level == "High" and text_level == "Low":
+        final = "⚠ Numeric REM Detected (Language not supportive)"
+    else:
+        final = "🟢 Low Risk of Earnings Manipulation"
 
     # ==================================================
     # OUTPUT
     # ==================================================
-    st.subheader("Results")
+    st.subheader("Numeric REM Analysis")
+    st.write({
+        "Abnormal CFO": round(ab_cfo, 2),
+        "Abnormal Production": round(ab_prod, 2),
+        "Abnormal Discretionary": round(ab_disc, 2),
+        "Final REM Score (ABS Formula)": round(rem_score, 2),
+        "REM Risk Level": rem_level
+    })
 
-    st.metric("Text-based REM Signal", round(text_rem_score, 2))
-    st.metric("Numeric REM Signal", round(numeric_rem_score, 2))
-    st.metric("Final Manipulation Risk Score", round(final_score, 2))
+    st.subheader("Text Analysis")
+    st.write({
+        "Abnormal Language Score": round(abnormal_text, 2),
+        "Language Risk Level": text_level
+    })
 
-    if final_score > 120:
-        st.error("🔴 High Risk of Earnings Manipulation")
-    elif final_score > 70:
-        st.warning("🟠 Moderate Risk of Earnings Manipulation")
-    else:
-        st.success("🟢 Low Risk of Earnings Manipulation")
+    st.subheader("Income Effect Interpretation")
+    st.write(income_effect if income_effect else ["No clear income-increasing signals detected"])
 
-    st.caption(
-        "The dashboard automatically infers REM indicators from "
-        "narrative tone and financial activity patterns. "
-        "This is a risk signal, not an audit conclusion."
-    )
+    st.subheader("Final Assessment")
+    st.success(final)
+
+    st.caption("""
+    REM is computed using ABS(-CFO) + ABS(PROD) + ABS(-DISC),
+    following income-increasing real earnings management logic.
+    Language analysis is used as an independent confirmation layer.
+    """)
+
+elif files and len(files) < 2:
+    st.info("Please upload at least **2 annual reports**.")
