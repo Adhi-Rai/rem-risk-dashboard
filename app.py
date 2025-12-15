@@ -8,7 +8,7 @@ import statistics
 st.title("Automated Earnings Manipulation Detection Dashboard")
 
 st.write("""
-**Input:** 2–5 annual report PDFs (same company, older → newer)  
+**Input:** 2–10 annual report PDFs (same company, older → newer)  
 **Model:**  
 • Numeric REM using ABS(-CFO) + ABS(PROD) + ABS(-DISC)  
 • Independent Text Manipulation Analysis  
@@ -19,7 +19,7 @@ st.write("""
 # INPUT
 # ==================================================
 files = st.file_uploader(
-    "Upload 2–5 Annual Report PDFs",
+    "Upload 2–10 Annual Report PDFs",
     type=["pdf"],
     accept_multiple_files=True
 )
