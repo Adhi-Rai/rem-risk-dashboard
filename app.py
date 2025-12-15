@@ -1,95 +1,86 @@
 import streamlit as st
 import re
-from textblob import TextBlob
 
 # --------------------------------------------------
-# BASIC PAGE CONTENT (NO PAGE SETUP REQUIRED)
+# PAGE
 # --------------------------------------------------
 st.title("Earnings Manipulation Risk Dashboard")
+
 st.write(
-    "Upload an Annual Report PDF. "
-    "The system will automatically analyze the text and "
-    "estimate the risk of earnings manipulation."
+    "PDF → Text Analysis → REM Risk Output\n\n"
+    "Upload an annual report PDF. The system analyzes management "
+    "language patterns commonly associated with real earnings management."
 )
 
 # --------------------------------------------------
-# INPUT: PDF UPLOAD
+# FILE INPUT
 # --------------------------------------------------
 uploaded_file = st.file_uploader(
-    "Upload Annual Report (PDF only)",
+    "Upload Annual Report (PDF)",
     type=["pdf"]
 )
 
 # --------------------------------------------------
-# FUNCTIONS
+# SIMPLE TEXT EXTRACTION (NO LIBRARIES)
 # --------------------------------------------------
-def read_pdf(file):
-    text = ""
-    with pdfplumber.open(file) as pdf:
-        for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-    return text
+def extract_text_from_pdf(file):
+    try:
+        raw = file.read()
+        text = raw.decode("latin-1", errors="ignore")
+        return text.lower()
+    except:
+        return ""
 
+# --------------------------------------------------
+# DICTIONARY-BASED ANALYSIS (NO NLP LIBRARIES)
+# --------------------------------------------------
+positive_words = [
+    "strong", "growth", "improved", "robust", "record", "positive"
+]
 
-def extract_section(text, patterns):
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return text[match.start():]
-    return ""
+uncertainty_words = [
+    "may", "might", "could", "risk", "uncertain",
+    "challenge", "subject to", "volatility"
+]
 
+justification_words = [
+    "one-time", "exceptional", "temporary",
+    "non-recurring", "adjusted", "excluding"
+]
 
-def uncertainty_score(text):
-    words = [
-        "may", "might", "could", "expected",
-        "subject to", "uncertain", "risk", "challenge"
-    ]
-    return sum(text.lower().count(w) for w in words) / max(len(text.split()), 1)
+def score_text(text, word_list):
+    return sum(text.count(w) for w in word_list)
 
 # --------------------------------------------------
 # MAIN LOGIC
 # --------------------------------------------------
 if uploaded_file:
 
+    st.success("PDF uploaded successfully")
+
     if st.button("Analyze Report"):
 
-        with st.spinner("Analyzing annual report..."):
+        with st.spinner("Analyzing report text..."):
 
-            # 1. Read full PDF
-            full_text = read_pdf(uploaded_file)
+            text = extract_text_from_pdf(uploaded_file)
 
-            # 2. Extract MD&A and Auditor sections
-            mdna_text = extract_section(
-                full_text,
-                [
-                    r"management discussion and analysis",
-                    r"management discussion",
-                    r"management review"
-                ]
-            )
+            if len(text.strip()) < 500:
+                st.error(
+                    "This PDF does not contain readable text. "
+                    "Please upload a text-based annual report."
+                )
+                st.stop()
 
-            auditor_text = extract_section(
-                full_text,
-                [
-                    r"independent auditors?[’']? report",
-                    r"auditor[’']?s report"
-                ]
-            )
+            pos_score = score_text(text, positive_words)
+            unc_score = score_text(text, uncertainty_words)
+            just_score = score_text(text, justification_words)
 
-            # 3. Text analysis
-            mdna_sentiment = TextBlob(mdna_text).sentiment.polarity
-            auditor_sentiment = TextBlob(auditor_text).sentiment.polarity
-            tone_gap = mdna_sentiment - auditor_sentiment
-            mdna_uncertainty = uncertainty_score(mdna_text)
-
-            # 4. REM risk score (text-based proxy)
+            # REM proxy score
             rem_score = (
-                0.40 * abs(mdna_sentiment) +
-                0.35 * mdna_uncertainty +
-                0.25 * abs(tone_gap)
-            ) * 100
+                0.30 * pos_score +
+                0.40 * unc_score +
+                0.30 * just_score
+            )
 
         # --------------------------------------------------
         # OUTPUT
@@ -98,14 +89,15 @@ if uploaded_file:
 
         st.metric("REM Risk Score", round(rem_score, 2))
 
-        if rem_score > 66:
+        if rem_score > 150:
             st.error("🔴 High Risk of Earnings Manipulation")
-        elif rem_score > 33:
+        elif rem_score > 80:
             st.warning("🟠 Moderate Risk of Earnings Manipulation")
         else:
             st.success("🟢 Low Risk of Earnings Manipulation")
 
         st.caption(
-            "This output represents earnings manipulation risk based on "
-            "narrative text patterns. It does not confirm manipulation."
+            "The score is based on linguistic patterns "
+            "linked to real earnings management in prior literature. "
+            "This does not confirm manipulation."
         )
