@@ -8,9 +8,12 @@ st.title("Earnings Manipulation Risk Dashboard")
 
 st.write(
     """
-    **Input:** Annual Report PDF + Financial Statement Numbers  
-    **Process:** Text Analysis + Real Earnings Management (REM) Indicators  
-    **Output:** Manipulation Risk Classification
+    **Stakeholder View**  
+    Input: Annual Report PDF  
+    Output: Earnings Manipulation Risk  
+
+    The system automatically detects real earnings management (REM)
+    indicators from narrative and numerical patterns in the report.
     """
 )
 
@@ -18,10 +21,13 @@ st.write(
 # PDF INPUT
 # ==================================================
 uploaded_file = st.file_uploader(
-    "Upload Annual Report (text-based PDF)",
+    "Upload Annual Report (PDF)",
     type=["pdf"]
 )
 
+# ==================================================
+# BASIC PDF TEXT EXTRACTION (PURE PYTHON)
+# ==================================================
 def extract_text_from_pdf(file):
     try:
         raw = file.read()
@@ -30,16 +36,16 @@ def extract_text_from_pdf(file):
         return ""
 
 # ==================================================
-# TEXT-BASED REM SIGNALS (DICTIONARY METHOD)
+# TEXTUAL REM SIGNALS
 # ==================================================
-positive_words = [
-    "strong", "growth", "record", "robust",
-    "improved", "positive", "resilient"
+optimism_words = [
+    "strong", "record", "robust", "exceptional",
+    "resilient", "growth", "outperformance"
 ]
 
 uncertainty_words = [
-    "may", "might", "could", "risk",
-    "uncertain", "challenge", "volatility"
+    "may", "might", "could", "risk", "uncertain",
+    "challenge", "headwinds", "volatility"
 ]
 
 justification_words = [
@@ -47,81 +53,93 @@ justification_words = [
     "non-recurring", "adjusted", "excluding"
 ]
 
-def count_words(text, word_list):
-    return sum(text.count(w) for w in word_list)
+def word_score(text, words):
+    return sum(text.count(w) for w in words)
 
 # ==================================================
-# FINANCIAL INPUTS (3 STATEMENTS)
+# AUTO NUMERIC DETECTION (HEURISTIC)
 # ==================================================
-st.subheader("Enter Financial Statement Data")
+def detect_large_numbers(text):
+    # detects large financial-looking numbers (₹, $, millions, crores etc.)
+    pattern = r"(rs\.?|₹|\$)?\s?\d{2,}(?:,\d{2,})*(?:\.\d+)?"
+    numbers = re.findall(pattern, text)
+    return len(numbers)
 
-revenue = st.number_input("Revenue", min_value=0.0)
-net_profit = st.number_input("Net Profit")
-cash_flow_ops = st.number_input("Cash Flow from Operations (CFO)")
-inventory = st.number_input("Inventory")
-receivables = st.number_input("Trade Receivables")
-capex = st.number_input("Capital Expenditure")
+def detect_financial_activity(text, keywords):
+    return sum(text.count(k) for k in keywords)
 
 # ==================================================
-# ANALYSIS
+# MAIN ANALYSIS
 # ==================================================
 if uploaded_file and st.button("Analyze Report"):
 
-    # ---------------- PDF TEXT ANALYSIS ----------------
-    text = extract_text_from_pdf(uploaded_file)
+    with st.spinner("Analyzing report automatically..."):
 
-    if len(text.strip()) < 500:
-        st.error("PDF does not contain readable text.")
-        st.stop()
+        text = extract_text_from_pdf(uploaded_file)
 
-    pos_score = count_words(text, positive_words)
-    unc_score = count_words(text, uncertainty_words)
-    just_score = count_words(text, justification_words)
+        if len(text.strip()) < 1000:
+            st.error("PDF does not contain sufficient readable text.")
+            st.stop()
 
-    text_rem_score = (
-        0.3 * pos_score +
-        0.4 * unc_score +
-        0.3 * just_score
-    )
+        # ---------------- TEXT REM SCORE ----------------
+        optimism = word_score(text, optimism_words)
+        uncertainty = word_score(text, uncertainty_words)
+        justification = word_score(text, justification_words)
 
-    # ---------------- NUMERICAL REM ANALYSIS ----------------
-    if revenue <= 0:
-        st.error("Revenue must be greater than zero.")
-        st.stop()
+        text_rem_score = (
+            0.35 * optimism +
+            0.40 * uncertainty +
+            0.25 * justification
+        )
 
-    cfo_gap = abs(net_profit - cash_flow_ops) / revenue
-    inventory_ratio = inventory / revenue
-    receivable_ratio = receivables / revenue
-    capex_ratio = capex / revenue
+        # ---------------- NUMERIC REM PROXIES ----------------
+        large_numbers = detect_large_numbers(text)
 
-    numeric_rem_score = (
-        0.35 * cfo_gap +
-        0.25 * inventory_ratio +
-        0.20 * receivable_ratio +
-        0.20 * capex_ratio
-    ) * 100
+        inventory_mentions = detect_financial_activity(
+            text, ["inventory", "stock", "raw material"]
+        )
 
-    # ---------------- FINAL COMBINED SCORE ----------------
-    final_rem_score = (0.6 * numeric_rem_score) + (0.4 * text_rem_score)
+        receivable_mentions = detect_financial_activity(
+            text, ["receivable", "debtor", "outstanding"]
+        )
+
+        cashflow_mentions = detect_financial_activity(
+            text, ["cash flow", "operating cash", "cfo"]
+        )
+
+        capex_mentions = detect_financial_activity(
+            text, ["capital expenditure", "capex", "investment"]
+        )
+
+        numeric_rem_score = (
+            0.25 * large_numbers +
+            0.20 * inventory_mentions +
+            0.20 * receivable_mentions +
+            0.20 * capex_mentions +
+            0.15 * (1 / (cashflow_mentions + 1))
+        )
+
+        # ---------------- FINAL SCORE ----------------
+        final_score = (0.55 * numeric_rem_score) + (0.45 * text_rem_score)
 
     # ==================================================
     # OUTPUT
     # ==================================================
     st.subheader("Results")
 
-    st.metric("Text-based REM Score", round(text_rem_score, 2))
-    st.metric("Numeric REM Score", round(numeric_rem_score, 2))
-    st.metric("Final REM Risk Score", round(final_rem_score, 2))
+    st.metric("Text-based REM Signal", round(text_rem_score, 2))
+    st.metric("Numeric REM Signal", round(numeric_rem_score, 2))
+    st.metric("Final Manipulation Risk Score", round(final_score, 2))
 
-    if final_rem_score > 80:
+    if final_score > 120:
         st.error("🔴 High Risk of Earnings Manipulation")
-    elif final_rem_score > 40:
+    elif final_score > 70:
         st.warning("🟠 Moderate Risk of Earnings Manipulation")
     else:
         st.success("🟢 Low Risk of Earnings Manipulation")
 
     st.caption(
-        "The assessment combines narrative disclosure patterns and "
-        "financial-statement-based REM indicators. "
-        "It signals risk, not proof of manipulation."
+        "The dashboard automatically infers REM indicators from "
+        "narrative tone and financial activity patterns. "
+        "This is a risk signal, not an audit conclusion."
     )
